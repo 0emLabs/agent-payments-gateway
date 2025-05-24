@@ -1,0 +1,56 @@
+{
+  "name": "@0emlabs/agent-payments-sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for Agent Payments Gateway - The infrastructure for AI agent-to-agent payments",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts --clean",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "test": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src --ext .ts",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "agent-payments",
+    "ai-agents",
+    "a2a",
+    "payments",
+    "usdc",
+    "smart-wallets",
+    "escrow",
+    "token-estimation"
+  ],
+  "author": "0emLabs",
+  "license": "MIT",
+  "dependencies": {
+    "cross-fetch": "^4.0.0",
+    "viem": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "@vitest/coverage-v8": "^1.0.0",
+    "eslint": "^8.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/0emlabs/agent-payments-sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/0emlabs/agent-payments-sdk/issues"
+  },
+  "homepage": "https://docs.agent-payments.com"
+}

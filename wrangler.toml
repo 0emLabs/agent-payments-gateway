@@ -1,0 +1,96 @@
+name = "agent-payments-gateway"
+main = "packages/core/src/worker.ts"
+compatibility_date = "2024-01-25"
+compatibility_flags = ["nodejs_compat"]
+
+# D1 Database
+[[d1_databases]]
+binding = "MARKETPLACE_DB"
+database_name = "agent-payments"
+database_id = "YOUR_D1_DATABASE_ID"
+
+# KV Namespaces
+[[kv_namespaces]]
+binding = "KV_CACHE"
+id = "YOUR_KV_CACHE_ID"
+
+[[kv_namespaces]]
+binding = "ESCROW_STORE"
+id = "YOUR_ESCROW_STORE_ID"
+
+[[kv_namespaces]]
+binding = "WALLET_STORE"
+id = "YOUR_WALLET_STORE_ID"
+
+# Durable Objects
+[[durable_objects.bindings]]
+name = "AGENT_STATE"
+class_name = "AgentStateDO"
+script_name = "agent-payments-gateway"
+
+[[durable_objects.bindings]]
+name = "TRANSACTION_ORCHESTRATOR"
+class_name = "TransactionOrchestratorDO"
+script_name = "agent-payments-gateway"
+
+[[durable_objects.bindings]]
+name = "TOOL_REGISTRY"
+class_name = "ToolRegistryDO"
+script_name = "agent-payments-gateway"
+
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterDO"
+script_name = "agent-payments-gateway"
+
+# Durable Object Migrations
+[[migrations]]
+tag = "v1"
+new_classes = ["AgentStateDO", "TransactionOrchestratorDO", "ToolRegistryDO", "RateLimiterDO"]
+
+# Environment Variables
+[vars]
+API_BASE_URL = "https://api.agent-payments.dev"
+PLATFORM_FEE_PERCENT = "0.025"
+USDC_CONTRACT_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+
+# Token Counter Configuration
+UTC_SERVICE_URL = "https://universal-token-counter.workers.dev"
+ESCROW_BUFFER_PERCENTAGE = "15"
+ESCROW_TIMEOUT_MINUTES = "60"
+
+# Wallet Configuration
+WALLET_NETWORK = "base"
+ALCHEMY_AA_URL = "https://api.g.alchemy.com/v1/aa"
+
+# Production Environment
+[env.production]
+name = "agent-payments-gateway"
+route = { pattern = "api.agent-payments.com/*" }
+
+[env.production.vars]
+API_BASE_URL = "https://api.agent-payments.com"
+
+# Staging Environment
+[env.staging]
+name = "agent-payments-gateway-staging"
+route = { pattern = "staging-api.agent-payments.com/*" }
+
+[env.staging.vars]
+API_BASE_URL = "https://staging-api.agent-payments.com"
+
+# Development Environment
+[env.development]
+name = "agent-payments-gateway-dev"
+
+[env.development.vars]
+API_BASE_URL = "http://localhost:8787"
+
+# Secrets (to be set via wrangler secret put)
+# - CIRCLE_API_KEY
+# - UTC_API_KEY
+# - ALCHEMY_API_KEY
+# - ALCHEMY_POLICY_ID
+# - SMART_WALLET_POLICY_ID
+# - MCP_AUTH_SECRET
+# - PLATFORM_FEE_WALLET

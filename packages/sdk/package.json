@@ -1,0 +1,18 @@
+{
+  "name": "@0emlabs/agent-payments-sdk",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsup src/index.ts --dts",
+    "dev": "tsup src/index.ts --dts --watch",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "@0emlabs/agent-payments-core": "workspace:*",
+    "@0emlabs/agent-payments-types": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}

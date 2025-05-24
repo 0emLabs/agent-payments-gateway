@@ -1,5 +1,5 @@
-import { DurableObject } from "@cloudflare/workers-types";
-import { Env, AgentIdentity } from "../types/env";
+import { Env } from "../types/env";
+import { AgentIdentity, RegisterAgentRequest, DepositRequest, WithdrawRequest, UpdateAgentRequest } from "@0emlabs/agent-payments-types";
 import { generateApiKey, hashApiKey } from "../utils/crypto";
 
 export class AgentStateDO implements DurableObject {
@@ -61,7 +61,7 @@ export class AgentStateDO implements DurableObject {
     }
 
     try {
-      const { name, description, tags } = await request.json();
+      const { name, description, tags } = await request.json() as RegisterAgentRequest;
 
       // Check if agent already exists
       const existingAgent = await this.state.storage.get<AgentIdentity>('agent');
@@ -93,9 +93,11 @@ export class AgentStateDO implements DurableObject {
           balance: '0.00',
           currency: 'USDC'
         },
-        created_at: new Date().toISOString(),
-        last_active: new Date().toISOString(),
-        status: 'active'
+        createdAt: new Date().toISOString(), // Changed from created_at
+        lastActive: new Date().toISOString(), // Changed from last_active
+        status: 'active',
+        ownerId: '', // Placeholder, will be set from X-User-Id header during agent creation in core
+        reputationScore: 5.0 // Default value
       };
 
       await this.state.storage.put('agent', agent);
@@ -107,7 +109,7 @@ export class AgentStateDO implements DurableObject {
         agent_id: agentId,
         api_key: apiKey, // Return raw API key only once
         wallet: agent.wallet,
-        created_at: agent.created_at
+        created_at: agent.createdAt // Using createdAt
       }), {
         status: 201,
         headers: { 'Content-Type': 'application/json' }
@@ -152,7 +154,7 @@ export class AgentStateDO implements DurableObject {
     }
 
     try {
-      const { amount, transaction_hash } = await request.json();
+      const { amount, transaction_hash } = await request.json() as DepositRequest;
 
       if (!amount || !transaction_hash) {
         return new Response(JSON.stringify({
@@ -187,7 +189,7 @@ export class AgentStateDO implements DurableObject {
       const newBalance = currentBalance + parseFloat(amount);
 
       agent.wallet.balance = newBalance.toFixed(6);
-      agent.last_active = new Date().toISOString();
+      agent.lastActive = new Date().toISOString(); // Changed from last_active
 
       await this.state.storage.put('agent', agent);
 
@@ -216,7 +218,7 @@ export class AgentStateDO implements DurableObject {
     }
 
     try {
-      const { amount, to_address } = await request.json();
+      const { amount, to_address } = await request.json() as WithdrawRequest;
 
       if (!amount || !to_address) {
         return new Response(JSON.stringify({
@@ -254,7 +256,7 @@ export class AgentStateDO implements DurableObject {
       // Update balance
       const newBalance = currentBalance - withdrawAmount;
       agent.wallet.balance = newBalance.toFixed(6);
-      agent.last_active = new Date().toISOString();
+      agent.lastActive = new Date().toISOString(); // Changed from last_active
 
       await this.state.storage.put('agent', agent);
 
@@ -301,8 +303,8 @@ export class AgentStateDO implements DurableObject {
         balance: agent.wallet.balance,
         currency: agent.wallet.currency
       },
-      created_at: agent.created_at,
-      last_active: agent.last_active,
+      createdAt: agent.createdAt, // Using createdAt
+      lastActive: agent.lastActive, // Using lastActive
       status: agent.status
     };
 
@@ -317,7 +319,7 @@ export class AgentStateDO implements DurableObject {
     }
 
     try {
-      const updates = await request.json();
+      const updates = await request.json() as UpdateAgentRequest;
       const agent = await this.state.storage.get<AgentIdentity>('agent');
 
       if (!agent) {
@@ -328,19 +330,19 @@ export class AgentStateDO implements DurableObject {
       }
 
       // Update allowed fields
-      if (updates.name) agent.name = updates.name;
-      if (updates.description) agent.description = updates.description;
-      if (updates.tags) agent.tags = updates.tags;
-      if (updates.status) agent.status = updates.status;
+      if (updates.name !== undefined) agent.name = updates.name;
+      if (updates.description !== undefined) agent.description = updates.description;
+      if (updates.tags !== undefined) agent.tags = updates.tags;
+      if (updates.status !== undefined) agent.status = updates.status;
 
-      agent.last_active = new Date().toISOString();
+      agent.lastActive = new Date().toISOString(); // Changed from last_active
 
       await this.state.storage.put('agent', agent);
       await this.storeInMarketplace(agent);
 
       return new Response(JSON.stringify({
         success: true,
-        updated_at: agent.last_active
+        updated_at: agent.lastActive
       }), {
         headers: { 'Content-Type': 'application/json' }
       });
@@ -360,18 +362,19 @@ export class AgentStateDO implements DurableObject {
   private async storeInMarketplace(agent: AgentIdentity): Promise<void> {
     try {
       const stmt = this.env.MARKETPLACE_DB.prepare(`
-        INSERT OR REPLACE INTO agents (id, name, description, tags, status, created_at, last_active)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT OR REPLACE INTO agents (id, name, owner_id, api_key_hash, wallet_address, reputation_score, created_at, last_active)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       await stmt.bind(
         agent.id,
         agent.name,
-        agent.description,
-        JSON.stringify(agent.tags),
-        agent.status,
-        agent.created_at,
-        agent.last_active
+        agent.ownerId, // Assuming ownerId is available in AgentIdentity or derived
+        agent.api_key,
+        agent.wallet.address,
+        agent.reputationScore || 5.0, // Default value if not present
+        agent.createdAt, // Using createdAt
+        agent.lastActive // Using lastActive
       ).run();
     } catch (error) {
       console.error('[AgentStateDO] Failed to store in marketplace:', error);

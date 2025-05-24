@@ -1,15 +1,19 @@
-import { DurableObject } from "@cloudflare/workers-types";
-import { Env, TaskRequest, AgentIdentity } from "../types/env";
+import { DurableObjectState } from "@cloudflare/workers-types";
+import { Env } from "../types/env";
+import { CreateTaskParams, TaskStatus } from "@0emlabs/agent-payments-types";
 import { generateTaskId, generateTransactionId } from "../utils/crypto";
+import { EscrowService } from "../escrow/EscrowService";
 
 interface TransactionState {
-  task: TaskRequest;
+  task: CreateTaskParams; // Changed from TaskRequest
   escrow_amount: string;
   platform_fee: string;
+  escrow_id?: string; // ID for escrow tracking
   started_at: string;
   expires_at: string;
   client_agent_state?: string; // DO ID for client agent
   tool_agent_state?: string;   // DO ID for tool agent
+  status: TaskStatus; // Add status to TransactionState to mirror TaskStatus more closely
 }
 
 export class TransactionOrchestratorDO implements DurableObject {
@@ -71,11 +75,11 @@ export class TransactionOrchestratorDO implements DurableObject {
     }
 
     try {
-      const { client_agent_id, tool_agent_id, task_details, payment_offer } = await request.json();
+      const params = await request.json() as CreateTaskParams;
 
-      if (!client_agent_id || !tool_agent_id || !task_details || !payment_offer) {
+      if (!params.fromAgentId || !params.toAgentId || !params.payload || !params.payment) {
         return new Response(JSON.stringify({
-          error: 'Missing required fields: client_agent_id, tool_agent_id, task_details, payment_offer'
+          error: 'Missing required fields: fromAgentId, toAgentId, payload, payment'
         }), {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
@@ -87,7 +91,7 @@ export class TransactionOrchestratorDO implements DurableObject {
       if (existingTransaction) {
         return new Response(JSON.stringify({
           error: 'Transaction already exists',
-          task_id: existingTransaction.task.id
+          task_id: existingTransaction.task.payload.id || 'unknown' // Use payload.id as task id
         }), {
           status: 409,
           headers: { 'Content-Type': 'application/json' }
@@ -95,21 +99,25 @@ export class TransactionOrchestratorDO implements DurableObject {
       }
 
       // Get client agent info and check balance
-      const clientAgentState = this.env.AGENT_STATE.get(this.env.AGENT_STATE.idFromString(client_agent_id));
-      const clientResponse = await clientAgentState.fetch(new Request(`${this.env.API_BASE_URL}/balance`));
+      const clientAgentState = this.env.AGENT_STATE.get(this.env.AGENT_STATE.idFromString(params.fromAgentId));
+      // Use CFRequest for the internal fetch call to match DurableObject's fetch signature more closely
+      const clientResponse = await clientAgentState.fetch(new Request(`${this.env.API_BASE_URL}/api/v1/agents/${params.fromAgentId}/wallet`));
 
       if (!clientResponse.ok) {
         return new Response(JSON.stringify({
-          error: 'Client agent not found or invalid'
+          error: 'Client agent not found or invalid balance info',
+          details: await clientResponse.text() // Provide more details from the response
         }), {
-          status: 404,
+          status: clientResponse.status,
           headers: { 'Content-Type': 'application/json' }
         });
       }
 
-      const clientBalance = await clientResponse.json();
-      const requiredAmount = parseFloat(payment_offer.amount);
-      const platformFee = requiredAmount * 0.025; // 2.5% platform fee
+      const clientBalance = await clientResponse.json() as { balance: string };
+      const requiredAmount = parseFloat(params.payment.amount);
+      // Ensure PLATFORM_FEE_PERCENT is a valid number, default to 0.025 if not defined or invalid
+      const platformFeePercent = parseFloat(this.env.PLATFORM_FEE_PERCENT || '0.025');
+      const platformFee = requiredAmount * platformFeePercent;
       const totalRequired = requiredAmount + platformFee;
 
       if (parseFloat(clientBalance.balance) < totalRequired) {
@@ -124,14 +132,46 @@ export class TransactionOrchestratorDO implements DurableObject {
       }
 
       // Check if tool agent exists
-      const toolAgentState = this.env.AGENT_STATE.get(this.env.AGENT_STATE.idFromString(tool_agent_id));
-      const toolResponse = await toolAgentState.fetch(new Request(`${this.env.API_BASE_URL}/info`));
+      const toolAgentState = this.env.AGENT_STATE.get(this.env.AGENT_STATE.idFromString(params.toAgentId));
+      // Use CFRequest for the internal fetch call
+      const toolResponse = await toolAgentState.fetch(new Request(`${this.env.API_BASE_URL}/api/v1/agents/${params.toAgentId}`));
 
       if (!toolResponse.ok) {
         return new Response(JSON.stringify({
-          error: 'Tool agent not found or invalid'
+          error: 'Tool agent not found or invalid',
+          details: await toolResponse.text()
         }), {
-          status: 404,
+          status: toolResponse.status,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+
+      // Create escrow for the task
+      const escrowService = new EscrowService(this.env);
+      let escrowResult;
+      
+      try {
+        // Extract task description from payload
+        const taskDescription = typeof params.payload === 'string' 
+          ? params.payload 
+          : JSON.stringify(params.payload);
+        
+        // Use model from payment metadata or default
+        const model = params.payment.metadata?.model || 'gpt-4';
+        
+        escrowResult = await escrowService.createEscrow({
+          fromAgentId: params.fromAgentId,
+          toAgentId: params.toAgentId,
+          taskDescription,
+          model,
+          estimatedCost: requiredAmount
+        });
+      } catch (error) {
+        return new Response(JSON.stringify({
+          error: 'Failed to create escrow',
+          details: error instanceof Error ? error.message : 'Unknown error'
+        }), {
+          status: 500,
           headers: { 'Content-Type': 'application/json' }
         });
       }
@@ -141,38 +181,17 @@ export class TransactionOrchestratorDO implements DurableObject {
       const now = new Date().toISOString();
       const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24 hours from now
 
-      const task: TaskRequest = {
-        id: taskId,
-        client_agent_id,
-        tool_agent_id,
-        task_details,
-        payment_offer,
-        status: 'pending',
-        created_at: now,
-        expires_at: expiresAt
-      };
-
-      // Escrow the funds
-      const escrowResult = await this.escrowFunds(client_agent_id, totalRequired.toFixed(6));
-      if (!escrowResult.success) {
-        return new Response(JSON.stringify({
-          error: 'Failed to escrow funds',
-          details: escrowResult.error
-        }), {
-          status: 500,
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Store transaction state
+      // Store transaction state with CreateTaskParams
       const transactionState: TransactionState = {
-        task,
-        escrow_amount: totalRequired.toFixed(6),
+        task: params, // Store the incoming params directly
+        escrow_amount: escrowResult.lockedAmount,
         platform_fee: platformFee.toFixed(6),
+        escrow_id: escrowResult.escrowId,
         started_at: now,
         expires_at: expiresAt,
-        client_agent_state: client_agent_id,
-        tool_agent_state: tool_agent_id
+        client_agent_state: params.fromAgentId,
+        tool_agent_state: params.toAgentId,
+        status: 'pending' // Initialize status
       };
 
       await this.state.storage.put('transaction', transactionState);
@@ -181,7 +200,7 @@ export class TransactionOrchestratorDO implements DurableObject {
       await this.state.storage.setAlarm(new Date(expiresAt).getTime());
 
       // Log transaction in database
-      await this.logTransaction(task, 'created');
+      await this.logTransaction(params, 'created'); // Pass params (CreateTaskParams)
 
       return new Response(JSON.stringify({
         task_id: taskId,
@@ -211,7 +230,7 @@ export class TransactionOrchestratorDO implements DurableObject {
     }
 
     try {
-      const { tool_agent_id } = await request.json();
+      const { tool_agent_id } = await request.json() as { tool_agent_id: string };
 
       const transactionState = await this.state.storage.get<TransactionState>('transaction');
       if (!transactionState) {
@@ -222,7 +241,7 @@ export class TransactionOrchestratorDO implements DurableObject {
       }
 
       // Verify the tool agent
-      if (transactionState.task.tool_agent_id !== tool_agent_id) {
+      if (transactionState.task.toAgentId !== tool_agent_id) { // Access toAgentId from task (CreateTaskParams)
         return new Response(JSON.stringify({ error: 'Unauthorized tool agent' }), {
           status: 403,
           headers: { 'Content-Type': 'application/json' }
@@ -230,10 +249,10 @@ export class TransactionOrchestratorDO implements DurableObject {
       }
 
       // Check if task is still pending
-      if (transactionState.task.status !== 'pending') {
+      if (transactionState.status !== 'pending') { // Use transactionState.status
         return new Response(JSON.stringify({
           error: 'Task not in pending state',
-          current_status: transactionState.task.status
+          current_status: transactionState.status
         }), {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
@@ -249,17 +268,17 @@ export class TransactionOrchestratorDO implements DurableObject {
       }
 
       // Update task status
-      transactionState.task.status = 'in_progress';
+      transactionState.status = 'in_progress';
       await this.state.storage.put('transaction', transactionState);
 
       // Log transaction update
       await this.logTransaction(transactionState.task, 'accepted');
 
       return new Response(JSON.stringify({
-        task_id: transactionState.task.id,
+        task_id: transactionState.task.payload.id || 'unknown', // Use payload.id as task id
         status: 'in_progress',
-        task_details: transactionState.task.task_details,
-        payment_offer: transactionState.task.payment_offer
+        task_details: transactionState.task.payload, // Use payload
+        payment_offer: transactionState.task.payment
       }), {
         headers: { 'Content-Type': 'application/json' }
       });
@@ -281,7 +300,7 @@ export class TransactionOrchestratorDO implements DurableObject {
     }
 
     try {
-      const { tool_agent_id, result } = await request.json();
+      const { tool_agent_id, result } = await request.json() as { tool_agent_id: string; result: any };
 
       const transactionState = await this.state.storage.get<TransactionState>('transaction');
       if (!transactionState) {
@@ -292,7 +311,7 @@ export class TransactionOrchestratorDO implements DurableObject {
       }
 
       // Verify the tool agent
-      if (transactionState.task.tool_agent_id !== tool_agent_id) {
+      if (transactionState.task.toAgentId !== tool_agent_id) { // Access toAgentId from task (CreateTaskParams)
         return new Response(JSON.stringify({ error: 'Unauthorized tool agent' }), {
           status: 403,
           headers: { 'Content-Type': 'application/json' }
@@ -300,10 +319,10 @@ export class TransactionOrchestratorDO implements DurableObject {
       }
 
       // Check if task is in progress
-      if (transactionState.task.status !== 'in_progress') {
+      if (transactionState.status !== 'in_progress') { // Use transactionState.status
         return new Response(JSON.stringify({
           error: 'Task not in progress',
-          current_status: transactionState.task.status
+          current_status: transactionState.status
         }), {
           status: 400,
           headers: { 'Content-Type': 'application/json' }
@@ -328,7 +347,7 @@ export class TransactionOrchestratorDO implements DurableObject {
       }
 
       // Update task status
-      transactionState.task.status = 'completed';
+      transactionState.status = 'completed';
       await this.state.storage.put('transaction', transactionState);
 
       // Clear expiration alarm
@@ -338,7 +357,7 @@ export class TransactionOrchestratorDO implements DurableObject {
       await this.logTransaction(transactionState.task, 'completed');
 
       return new Response(JSON.stringify({
-        task_id: transactionState.task.id,
+        task_id: transactionState.task.payload.id || 'unknown', // Use payload.id as task id
         status: 'completed',
         settlement: settlementResult.details
       }), {
@@ -362,7 +381,7 @@ export class TransactionOrchestratorDO implements DurableObject {
     }
 
     try {
-      const { client_agent_id, reason } = await request.json();
+      const { client_agent_id, reason } = await request.json() as { client_agent_id: string; reason?: string };
 
       const transactionState = await this.state.storage.get<TransactionState>('transaction');
       if (!transactionState) {
@@ -373,7 +392,7 @@ export class TransactionOrchestratorDO implements DurableObject {
       }
 
       // Verify the client agent
-      if (transactionState.task.client_agent_id !== client_agent_id) {
+      if (transactionState.task.fromAgentId !== client_agent_id) { // Use fromAgentId
         return new Response(JSON.stringify({ error: 'Unauthorized client agent' }), {
           status: 403,
           headers: { 'Content-Type': 'application/json' }
@@ -381,7 +400,7 @@ export class TransactionOrchestratorDO implements DurableObject {
       }
 
       // Check if task can be cancelled
-      if (transactionState.task.status === 'completed') {
+      if (transactionState.status === 'completed') { // Use transactionState.status
         return new Response(JSON.stringify({
           error: 'Cannot cancel completed task'
         }), {
@@ -403,7 +422,7 @@ export class TransactionOrchestratorDO implements DurableObject {
       }
 
       // Update task status
-      transactionState.task.status = 'cancelled';
+      transactionState.status = 'cancelled';
       await this.state.storage.put('transaction', transactionState);
 
       // Clear expiration alarm
@@ -413,7 +432,7 @@ export class TransactionOrchestratorDO implements DurableObject {
       await this.logTransaction(transactionState.task, 'cancelled', reason);
 
       return new Response(JSON.stringify({
-        task_id: transactionState.task.id,
+        task_id: transactionState.task.payload.id || 'unknown', // Use payload.id as task id
         status: 'cancelled',
         refund_amount: transactionState.escrow_amount
       }), {
@@ -450,6 +469,7 @@ export class TransactionOrchestratorDO implements DurableObject {
       task: transactionState.task,
       escrow_amount: transactionState.escrow_amount,
       platform_fee: transactionState.platform_fee,
+      status: transactionState.status, // Include status
       result: result || null
     }), {
       headers: { 'Content-Type': 'application/json' }
@@ -463,12 +483,12 @@ export class TransactionOrchestratorDO implements DurableObject {
       return new Response('Transaction not found', { status: 404 });
     }
 
-    if (transactionState.task.status === 'pending' || transactionState.task.status === 'in_progress') {
+    if (transactionState.status === 'pending' || transactionState.status === 'in_progress') {
       // Refund escrow
       await this.refundEscrow(transactionState);
 
       // Update status
-      transactionState.task.status = 'cancelled';
+      transactionState.status = 'cancelled';
       await this.state.storage.put('transaction', transactionState);
 
       // Log timeout
@@ -485,64 +505,84 @@ export class TransactionOrchestratorDO implements DurableObject {
   }
 
   // Helper methods
-  private async escrowFunds(clientAgentId: string, amount: string): Promise<{success: boolean, error?: string}> {
-    try {
-      const clientAgentState = this.env.AGENT_STATE.get(this.env.AGENT_STATE.idFromString(clientAgentId));
-
-      // Simulate escrow by deducting from client balance
-      const response = await clientAgentState.fetch(new Request(`${this.env.API_BASE_URL}/withdraw`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          amount,
-          to_address: 'escrow_' + this.state.id.toString()
-        })
-      }));
-
-      if (!response.ok) {
-        const error = await response.json();
-        return { success: false, error: error.error || 'Unknown error' };
-      }
-
-      return { success: true };
-    } catch (error) {
-      console.error('[TransactionOrchestratorDO] Escrow error:', error);
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
-    }
-  }
 
   private async settlePayment(transactionState: TransactionState): Promise<{success: boolean, error?: string, details?: any}> {
     try {
-      const paymentAmount = parseFloat(transactionState.task.payment_offer.amount);
+      const paymentAmount = parseFloat(transactionState.task.payment.amount); // Access payment.amount
       const platformFee = parseFloat(transactionState.platform_fee);
 
-      // Credit tool agent
-      const toolAgentState = this.env.AGENT_STATE.get(this.env.AGENT_STATE.idFromString(transactionState.task.tool_agent_id));
-      const toolResponse = await toolAgentState.fetch(new Request(`${this.env.API_BASE_URL}/deposit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          amount: paymentAmount.toFixed(6),
-          transaction_hash: generateTransactionId()
-        })
-      }));
+      // Use escrow service to release funds
+      if (transactionState.escrow_id) {
+        const escrowService = new EscrowService(this.env);
+        
+        // Get actual token usage from result (this would come from the tool agent's response)
+        // For now, we'll use the estimated values
+        const taskResult = await this.state.storage.get('task_result');
+        const actualTokens = taskResult?.tokenUsage?.totalTokens || 0;
+        const actualCost = taskResult?.tokenUsage?.totalCost || paymentAmount;
+        
+        const releaseResult = await escrowService.releaseEscrow({
+          escrowId: transactionState.escrow_id,
+          actualTokens,
+          actualCost
+        });
 
-      if (!toolResponse.ok) {
-        const error = await toolResponse.json();
-        return { success: false, error: error.error || 'Failed to credit tool agent' };
-      }
-
-      // Credit platform fee wallet (simplified)
-      // In production, this would credit the platform's actual wallet
-
-      return {
-        success: true,
-        details: {
-          tool_agent_credited: paymentAmount.toFixed(6),
-          platform_fee_collected: platformFee.toFixed(6),
-          total_settled: (paymentAmount + platformFee).toFixed(6)
+        if (!releaseResult.success) {
+          return { success: false, error: releaseResult.error };
         }
-      };
+
+        // Credit platform fee wallet if needed
+        if (this.env.PLATFORM_FEE_WALLET && platformFee > 0) {
+          const platformFeeWalletState = this.env.AGENT_STATE.get(this.env.AGENT_STATE.idFromString(this.env.PLATFORM_FEE_WALLET));
+          const platformFeeResponse = await platformFeeWalletState.fetch(new Request(`${this.env.API_BASE_URL}/api/v1/agents/${this.env.PLATFORM_FEE_WALLET}/wallet/deposit`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              amount: platformFee.toFixed(6),
+              transaction_hash: generateTransactionId()
+            })
+          }));
+          if (!platformFeeResponse.ok) {
+            const error: any = await platformFeeResponse.json();
+            console.error('[TransactionOrchestratorDO] Failed to collect platform fee:', error.error || error.message);
+          }
+        }
+
+        return {
+          success: true,
+          details: {
+            tool_agent_credited: actualCost.toFixed(6),
+            platform_fee_collected: platformFee.toFixed(6),
+            total_settled: (actualCost + platformFee).toFixed(6),
+            refunded: releaseResult.refundAmount || '0'
+          }
+        };
+      } else {
+        // Fallback to original logic if no escrow
+        const toolAgentState = this.env.AGENT_STATE.get(this.env.AGENT_STATE.idFromString(transactionState.task.toAgentId));
+        const toolResponse = await toolAgentState.fetch(new Request(`${this.env.API_BASE_URL}/api/v1/agents/${transactionState.task.toAgentId}/wallet/deposit`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            amount: paymentAmount.toFixed(6),
+            transaction_hash: generateTransactionId()
+          })
+        }));
+
+        if (!toolResponse.ok) {
+          const error: any = await toolResponse.json();
+          return { success: false, error: error.error || 'Failed to credit tool agent' };
+        }
+
+        return {
+          success: true,
+          details: {
+            tool_agent_credited: paymentAmount.toFixed(6),
+            platform_fee_collected: platformFee.toFixed(6),
+            total_settled: (paymentAmount + platformFee).toFixed(6)
+          }
+        };
+      }
     } catch (error) {
       console.error('[TransactionOrchestratorDO] Settlement error:', error);
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
@@ -551,43 +591,56 @@ export class TransactionOrchestratorDO implements DurableObject {
 
   private async refundEscrow(transactionState: TransactionState): Promise<{success: boolean, error?: string}> {
     try {
-      const clientAgentState = this.env.AGENT_STATE.get(this.env.AGENT_STATE.idFromString(transactionState.task.client_agent_id));
+      if (transactionState.escrow_id) {
+        const escrowService = new EscrowService(this.env);
+        const cancelResult = await escrowService.cancelEscrow(
+          transactionState.escrow_id,
+          'Task cancelled or expired'
+        );
+        
+        return cancelResult;
+      } else {
+        // Fallback to original logic if no escrow
+        const clientAgentState = this.env.AGENT_STATE.get(this.env.AGENT_STATE.idFromString(transactionState.task.fromAgentId));
 
-      const response = await clientAgentState.fetch(new Request(`${this.env.API_BASE_URL}/deposit`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          amount: transactionState.escrow_amount,
-          transaction_hash: generateTransactionId()
-        })
-      }));
+        const response = await clientAgentState.fetch(new Request(`${this.env.API_BASE_URL}/api/v1/agents/${transactionState.task.fromAgentId}/wallet/deposit`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            amount: transactionState.escrow_amount,
+            transaction_hash: generateTransactionId()
+          })
+        }));
 
-      if (!response.ok) {
-        const error = await response.json();
-        return { success: false, error: error.error || 'Failed to refund escrow' };
+        if (!response.ok) {
+          const error: any = await response.json();
+          return { success: false, error: error.error || 'Failed to refund escrow' };
+        }
+
+        return { success: true };
       }
-
-      return { success: true };
     } catch (error) {
       console.error('[TransactionOrchestratorDO] Refund error:', error);
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
     }
   }
 
-  private async logTransaction(task: TaskRequest, action: string, details?: string): Promise<void> {
+  private async logTransaction(task: CreateTaskParams, action: string, details?: string): Promise<void> { // Changed task to CreateTaskParams
     try {
       const stmt = this.env.MARKETPLACE_DB.prepare(`
-        INSERT INTO transaction_logs (task_id, action, details, timestamp, client_agent_id, tool_agent_id)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO transaction_logs (task_id, action, details, timestamp, client_agent_id, tool_agent_id, amount, currency)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       await stmt.bind(
-        task.id,
+        task.payload.id || 'unknown', // Use payload.id for task_id
         action,
         details || null,
         new Date().toISOString(),
-        task.client_agent_id,
-        task.tool_agent_id
+        task.fromAgentId,
+        task.toAgentId,
+        task.payment.amount,
+        task.payment.currency
       ).run();
     } catch (error) {
       console.error('[TransactionOrchestratorDO] Failed to log transaction:', error);
