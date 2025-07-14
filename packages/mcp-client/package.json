@@ -1,0 +1,28 @@
+{
+  "name": "test-mcp-server",
+  "version": "1.0.0",
+  "description": "Test MCP Server with X402 Payment Middleware",
+  "main": "src/index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "node build.js",
+    "deploy": "bun run build && wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "dependencies": {
+    "@cloudflare/workers-types": "^4.20250620.0",
+    "hono": "^4.7.11",
+    "zod": "^3.25.52",
+    "viem": "^2.7.15",
+    "x402": "^0.4.1",
+    "x402-hono": "^0.4.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.5",
+    "typescript": "^5.8.3"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}

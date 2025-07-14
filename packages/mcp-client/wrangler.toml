@@ -1,0 +1,23 @@
+name = "test-mcp-server"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[env.production]
+vars = { ENVIRONMENT = "production" }
+
+[env.staging]
+vars = { ENVIRONMENT = "staging" }
+
+[[env.production.kv_namespaces]]
+binding = "AUTH_STORE"
+id = "your-auth-kv-namespace-id"
+
+[[env.production.kv_namespaces]]
+binding = "STATE_STORE"
+id = "your-state-kv-namespace-id"
+
+[vars]
+ENVIRONMENT = "development"
+USDC_CONTRACT_ADDRESS = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+PAYMENT_DESTINATION = "0x73e741aEC0a1a3134a444d865b591d7363c5Be71"
+FACILITATOR_URL = "https://x402.org/facilitator"
