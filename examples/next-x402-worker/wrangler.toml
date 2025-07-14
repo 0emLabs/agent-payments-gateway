@@ -1,0 +1,21 @@
+name = "x402-worker"
+main = "src/index.ts"
+compatibility_date = "2024-01-15"
+compatibility_flags = ["nodejs_compat"]
+
+[env.production]
+name = "x402-worker"
+
+[env.staging]
+name = "x402-worker-staging"
+
+# Environment variables
+[vars]
+USDC_CONTRACT_ADDRESS = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+# PAYMENT_DESTINATION = "0x742d35Cc6634C0532925a3b8D1C9db3c8E0C8972"  # Optional - worker will generate one
+ALLOWED_ORIGINS = "http://localhost:3000,https://your-domain.com"
+FACILITATOR_URL = "https://x402.org/facilitator"
+
+# For production, use secrets instead of vars for sensitive data
+# Run: wrangler secret put PAYMENT_DESTINATION
+# Run: wrangler secret put USDC_CONTRACT_ADDRESS

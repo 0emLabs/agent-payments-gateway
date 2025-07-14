@@ -1,0 +1,24 @@
+{
+  "name": "x402-worker",
+  "version": "1.0.0",
+  "description": "X-402 Payment Required Worker Service",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest",
+    "test:watch": "vitest --watch"
+  },
+  "dependencies": {
+    "@cloudflare/workers-types": "^4.20240117.0",
+    "hono": "^3.12.11",
+    "viem": "^2.7.15",
+    "x402": "^0.4.1",
+    "x402-hono": "^0.4.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.2",
+    "wrangler": "^3.25.0"
+  }
+}
