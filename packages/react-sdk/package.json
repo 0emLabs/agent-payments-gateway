@@ -1,6 +1,6 @@
 {
   "name": "@0emlabs/payments-gateway-sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -16,13 +16,16 @@
     "@privy-io/react-auth": ">=2.18.0",
     "@privy-io/wagmi": ">=1.0.5",
     "@radix-ui/react-dialog": ">=1.1.2",
-    "@radix-ui/react-progress": ">=1.1.0"
+    "@radix-ui/react-progress": ">=1.1.0",
+    "react-dom": ">=18"
   },
   "publishConfig": {
     "access": "public"
   },
   "devDependencies": {
     "tsup": "^8.0.2",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "lucide-react": "^0.462.0",
+    "@privy-io/react-auth": "^2.18.0"
   }
 }
