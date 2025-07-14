@@ -10,6 +10,12 @@
   "dependencies": {
     "react": "^18.3.1"
   },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "devDependencies": {
     "tsup": "^8.0.2",
     "typescript": "^5.4.0"
