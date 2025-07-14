@@ -1,0 +1,13 @@
+{
+  "name": "@0emlabs/worker",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "dev": "npx wrangler dev",
+    "deploy": "npx wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.24.3"
+  }
+}

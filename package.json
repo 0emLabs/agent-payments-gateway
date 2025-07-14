@@ -1,0 +1,11 @@
+{
+  "name": "agent-payments-gateway",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "build": "pnpm -r run build",
+    "dev": "pnpm --filter @0emlabs/worker dev"
+  }
+}

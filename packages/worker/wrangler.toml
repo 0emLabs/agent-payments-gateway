@@ -1,0 +1,89 @@
+name = "stripe-for-agents"
+main = "src/index.ts"
+compatibility_date = "2025-01-07"
+account_id = "660315e4ceb654bdb303a52903461fa2"
+
+# KV Namespaces for caching
+[[kv_namespaces]]
+binding = "TOOL_CACHE"
+id = "tool_cache_namespace_id"
+
+[[kv_namespaces]]
+binding = "AUTH_STORE"
+id = "auth_store_namespace_id"
+
+[[kv_namespaces]]
+binding = "STATE_STORE"
+id = "state_store_namespace_id"
+
+# R2 Storage for large task payloads
+[[r2_buckets]]
+binding = "TASK_STORAGE"
+bucket_name = "a2a-task-payloads"
+
+# D1 Database for marketplace metadata
+[[d1_databases]]
+binding = "MARKETPLACE_DB"
+database_name = "a2a-marketplace"
+database_id = "marketplace_db_id"
+
+# Durable Objects for A2A Infrastructure
+[[durable_objects.bindings]]
+name = "AGENT_STATE"
+class_name = "AgentStateDO"
+
+[[durable_objects.bindings]]
+name = "TRANSACTION_ORCHESTRATOR"
+class_name = "TransactionOrchestratorDO"
+
+[[durable_objects.bindings]]
+name = "TOOL_REGISTRY"
+class_name = "ToolRegistryDO"
+
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterDO"
+
+# Legacy Slack Objects (keeping for backward compatibility)
+[[durable_objects.bindings]]
+name = "PARENT_ORCHESTRATOR"
+class_name = "ParentOrchestratorDO"
+
+[[durable_objects.bindings]]
+name = "CONTEXT_CONTROLLER"
+class_name = "ContextControllerDO"
+
+# Durable Object migrations
+[[migrations]]
+tag = "v1"
+new_classes = ["ParentOrchestratorDO", "ContextControllerDO", "RateLimiterDO"]
+
+[[migrations]]
+tag = "v2"
+new_classes = ["AgentStateDO", "TransactionOrchestratorDO", "ToolRegistryDO"]
+
+# Queue bindings
+[[queues.producers]]
+binding = "TASK_QUEUE"
+queue = "a2a-tasks"
+
+[[queues.consumers]]
+queue = "a2a-tasks"
+max_batch_size = 10
+max_batch_timeout = 30
+max_retries = 3
+dead_letter_queue = "a2a-dlq"
+
+# Environment variables
+[vars]
+NODE_ENV = "production"
+API_BASE_URL = "https://stripe-for-agents.workers.dev"
+FRONTEND_APP_URL = "https://0emlabs.com"
+SLACK_SIGNING_SECRET = "your_slack_signing_secret"
+
+# Secrets (use wrangler secret put to set these)
+# CIRCLE_API_KEY - for USDC payments
+# JWT_SIGNING_KEY - for agent authentication
+# TENANT_ENCRYPTION_KEYS - for data encryption
+# MCP_AUTH_SECRET - for MCP integration
+# PLATFORM_FEE_WALLET - for collecting fees
