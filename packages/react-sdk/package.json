@@ -3,9 +3,10 @@
   "version": "0.1.1",
   "license": "MIT",
   "main": "dist/index.js",
+  "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsup src --dts --format esm,cjs --out-dir dist"
+    "build": "tsup"
   },
   "dependencies": {
     "react": "^18.3.1"
