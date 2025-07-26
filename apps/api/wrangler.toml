@@ -1,0 +1,50 @@
+name = "agent-payments-api"
+main = "dist/index.js"
+compatibility_date = "2025-01-15"
+compatibility_flags = ["nodejs_compat_v2"]
+workers_dev = false
+
+[[routes]]
+pattern = "payments-api.0emlabs.com/*"
+zone_name = "0emlabs.com"
+
+[[kv_namespaces]]
+binding = "AUTH_STORE"
+id = "AUTH_STORE_ID" # Replace with actual KV namespace ID
+
+[[kv_namespaces]]
+binding = "PAYMENT_SESSIONS"
+id = "PAYMENT_SESSIONS_ID" # Replace with actual KV namespace ID
+
+[[kv_namespaces]]
+binding = "ESCROW_STORE"
+id = "ESCROW_STORE_ID" # Replace with actual KV namespace ID
+
+[[kv_namespaces]]
+binding = "RATE_LIMIT_STORE"
+id = "RATE_LIMIT_STORE_ID" # Replace with actual KV namespace ID
+
+[[durable_objects]]
+name = "TransactionOrchestrator"
+class_name = "TransactionOrchestratorDO"
+
+[[durable_objects]]
+name = "AgentState"
+class_name = "AgentStateDO"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["TransactionOrchestratorDO", "AgentStateDO"]
+
+[vars]
+FRONTEND_URL = "https://payments.0emlabs.com"
+UTC_API_URL = "http://localhost:8000" # Universal Token Counter API
+ENVIRONMENT = "production"
+
+# Secrets (add via wrangler secret put)
+# MCP_AUTH_SECRET
+# COINBASE_API_KEY
+# COINBASE_API_SECRET
+# ALCHEMY_API_KEY
+# STRIPE_SECRET_KEY
+# ENCRYPTION_KEY
